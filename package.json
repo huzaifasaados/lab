@@ -1,0 +1,23 @@
+{
+  "name": "claude-node-js-weaviate",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "nodemon server.js",
+    "setup": "node weaviate-setup.js",
+    "embed": "node embed-products.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.90.1",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "nodemon": "^3.1.11",
+    "openai": "^6.16.0",
+    "weaviate-ts-client": "^2.2.0"
+  }
+}

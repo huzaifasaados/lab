@@ -1,0 +1,62 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Next.js build output
+.next/
+out/
+
+# Production
+build/
+
+# Debug / Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local env files
+.env
+.env.local
+.env.development.local
+.env.production.local
+.env.test.local
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Typescript
+*.tsbuildinfo
+
+# Vercel
+.vercel/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Editor settings
+.vscode/
+.idea/
+*.swp
+
+# ❌ Exclude internal scripts
+scripts/
+
+
+# ❌ Exclude internal documentation
+AGENT_DOCUMENTATION.md
+AUTH_SYSTEM_GUIDE.md
+SUPABASE_SETUP.md
+
+# ❌ Exclude SQL files (if private)
+database-indexes.sql
+
+
+# Ignore only these specific folders
+components/animations/
+components/sections/
+app/providers/
