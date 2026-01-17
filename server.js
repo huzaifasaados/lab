@@ -34,22 +34,45 @@ const EMBEDDING_MODEL = "text-embedding-3-small"
 // ============================================================================
 
 /**
- * Build semantic query with occasion context
+ * Build semantic query with occasion AND style context
+ * Added style parameter to respect user's aesthetic preferences
  */
-function buildSemanticQuery(query, occasion, category) {
+function buildSemanticQuery(query, occasion, category, style = null) {
   let semanticQuery = query
 
-  // Add occasion-specific context words
+  // Add style-specific modifiers FIRST (highest priority)
+  const styleModifiers = {
+    minimalist: "clean simple structured understated elegant refined timeless classic solid",
+    bohemian: "flowy relaxed earthy natural organic textured layered artistic",
+    edgy: "bold modern asymmetric leather statement unique contemporary urban",
+    classic: "traditional timeless tailored polished sophisticated refined elegant",
+    romantic: "soft feminine delicate flowy graceful pretty gentle flowing",
+    sporty: "athletic casual comfortable practical functional active dynamic",
+    trendy: "fashion-forward modern stylish current contemporary chic on-trend",
+  }
+
+  if (style && styleModifiers[style.toLowerCase()]) {
+    semanticQuery += ` ${styleModifiers[style.toLowerCase()]}`
+  }
+
+  // Add occasion-specific context words (but filter based on style)
   const occasionContext = {
     workout: "athletic breathable moisture-wicking performance sportswear activewear gym fitness",
-    party: "elegant dressy glamorous sparkle formal evening cocktail stylish festive",
+    party: "elegant dressy glamorous formal evening cocktail stylish",
     work: "professional business corporate office tailored polished structured career",
     date: "romantic chic sophisticated feminine elegant stylish trendy dressy",
     vacation: "resort casual travel lightweight comfortable relaxed breezy beach",
     everyday: "casual comfortable versatile everyday basic essential simple",
   }
 
-  const contextWords = occasionContext[occasion] || occasionContext.everyday
+  let contextWords = occasionContext[occasion] || occasionContext.everyday
+
+  // REMOVE contradictory words based on style
+  if (style === "minimalist") {
+    // Remove maximalist descriptors for minimalist style
+    contextWords = contextWords.replace(/sparkle|glamorous|festive/gi, "").trim()
+  }
+
   semanticQuery += ` ${contextWords}`
 
   // Add category context
@@ -274,15 +297,17 @@ function postFilterByOccasion(products, occasion, category) {
 }
 
 /**
- * Deduplicate products by product_id
+ * Deduplicate products by product_id or id field
+ * Fixed to check both product_id and id fields for deduplication
  */
 function deduplicateProducts(products) {
   const seen = new Set()
   const unique = []
 
   for (const product of products) {
-    if (!seen.has(product.product_id)) {
-      seen.add(product.product_id)
+    const productId = product.product_id || product.id
+    if (!seen.has(productId)) {
+      seen.add(productId)
       unique.push(product)
     }
   }
@@ -364,6 +389,113 @@ function calculateDiversityScore(products) {
     .map(({ _debug, diversityScore, ...product }) => product)
 }
 
+/**
+ * Get budget tier and flexibility rules based on price range
+ * Fixed to properly calculate tier from total budget, not category budget
+ */
+function getBudgetFlexibility(totalMin, totalMax) {
+  // Calculate average from TOTAL budget, not category budget
+  const avgPrice = (totalMin + totalMax) / 2
+
+  let tier, downFlex, upFlex
+
+  if (avgPrice < 150) {
+    // Budget tier - tight on both ends
+    tier = "budget"
+    downFlex = 0.1 // -10% on minimum
+    upFlex = 0.2 // +20% on maximum
+  } else if (avgPrice < 300) {
+    // Moderate tier - standard flexibility
+    tier = "moderate"
+    downFlex = 0.1 // -10% on minimum
+    upFlex = 0.3 // +30% on maximum
+  } else if (avgPrice < 700) {
+    // Premium tier - generous upward flexibility
+    tier = "premium"
+    downFlex = 0.05 // -5% on minimum
+    upFlex = 0.35 // +35% on maximum
+  } else {
+    // Luxury tier - unlimited upward
+    tier = "luxury"
+    downFlex = 0.05 // -5% on minimum
+    upFlex = 999 // Unlimited upward
+  }
+
+  return { tier, downFlex, upFlex }
+}
+
+/**
+ * Get occasion-based category budget percentages
+ */
+function getOccasionCategoryBudgets(occasion) {
+  const budgetRules = {
+    workout: {
+      shoes: { min: 0.4, max: 0.5 },
+      tops: { min: 0.25, max: 0.3 },
+      bottoms: { min: 0.25, max: 0.3 },
+    },
+    party: {
+      tops: { min: 0.35, max: 0.4 },
+      shoes: { min: 0.3, max: 0.35 },
+      bottoms: { min: 0.25, max: 0.3 },
+    },
+    work: {
+      tops: { min: 0.35, max: 0.4 },
+      bottoms: { min: 0.3, max: 0.35 },
+      shoes: { min: 0.25, max: 0.3 },
+    },
+    date: {
+      tops: { min: 0.35, max: 0.4 },
+      bottoms: { min: 0.3, max: 0.35 },
+      shoes: { min: 0.25, max: 0.3 },
+    },
+    vacation: {
+      tops: { min: 0.33, max: 0.35 },
+      bottoms: { min: 0.33, max: 0.35 },
+      shoes: { min: 0.3, max: 0.35 },
+    },
+    everyday: {
+      tops: { min: 0.3, max: 0.35 },
+      bottoms: { min: 0.3, max: 0.35 },
+      shoes: { min: 0.3, max: 0.35 },
+    },
+  }
+
+  return budgetRules[occasion] || budgetRules.everyday
+}
+
+/**
+ * Calculate smart budget range with asymmetric flexibility and occasion awareness
+ * Fixed to require totalBudget parameter for correct tier detection
+ */
+function calculateSmartBudget(totalMin, totalMax, category, occasion) {
+  // Use TOTAL budget for tier detection, not category budget
+  const { tier, downFlex, upFlex } = getBudgetFlexibility(totalMin, totalMax)
+
+  // Get occasion-specific category percentages
+  const categoryBudgets = getOccasionCategoryBudgets(occasion)
+  const categoryPercent = categoryBudgets[category] || { min: 0.3, max: 0.35 }
+
+  // Calculate category-specific budget
+  const categoryMin = totalMin * categoryPercent.min
+  const categoryMax = totalMax * categoryPercent.max
+
+  // Apply asymmetric flexibility (less down, more up)
+  const flexibleMin = categoryMin * (1 - downFlex)
+  const flexibleMax = upFlex === 999 ? 999999 : categoryMax * (1 + upFlex)
+
+  return {
+    tier,
+    categoryMin: Math.round(categoryMin),
+    categoryMax: Math.round(categoryMax),
+    searchMin: Math.round(flexibleMin),
+    searchMax: upFlex === 999 ? 999999 : Math.round(flexibleMax),
+    downFlexPercent: Math.round(downFlex * 100),
+    upFlexPercent: upFlex === 999 ? "unlimited" : Math.round(upFlex * 100),
+    isUnlimited: upFlex === 999,
+  }
+}
+
 // ============================================================================
 // API ROUTES
 // ============================================================================
@@ -432,7 +564,15 @@ app.get("/api/count", async (req, res) => {
  */
 app.post("/api/search", async (req, res) => {
   try {
-    const { query, limit = 80, category = "general", occasion = "everyday", priceRange = null } = req.body
+    const {
+      query,
+      limit = 80,
+      category = "general",
+      occasion = "everyday",
+      priceRange = null,
+      totalBudget = null,
+      style = null, // Accept style parameter
+    } = req.body
 
     if (!query) {
       return res.status(400).json({
@@ -445,9 +585,10 @@ app.post("/api/search", async (req, res) => {
     console.log(`   Query: "${query}"`)
     console.log(`   Category: ${category}`)
     console.log(`   Occasion: ${occasion}`)
+    if (style) console.log(`   Style: ${style}`) // Log style
     console.log(`   Limit: ${limit}`)
 
-    const semanticQuery = buildSemanticQuery(query, occasion, category)
+    const semanticQuery = buildSemanticQuery(query, occasion, category, style)
     console.log(`   Semantic: "${semanticQuery}"`)
 
     console.log(`   🤖 Generating embedding...`)
@@ -490,28 +631,48 @@ app.post("/api/search", async (req, res) => {
       console.log(`   🎯 Forcing athletic shoes for workout`)
     }
 
-    if (priceRange) {
-      const minPrice = priceRange.min || 0
-      const maxPrice = priceRange.max || 99999
+    let budgetInfo = null
+    if (priceRange && priceRange.min !== undefined && priceRange.max !== undefined) {
+      if (!totalBudget) {
+        console.log(`   ⚠️  No totalBudget provided, using priceRange for tier detection (may be inaccurate)`)
+      }
+
+      const budgetForCalculation = totalBudget || priceRange
+      budgetInfo = calculateSmartBudget(budgetForCalculation.min, budgetForCalculation.max, category, occasion)
 
       whereFilters.operands.push({
         path: ["price"],
         operator: "GreaterThanEqual",
-        valueNumber: minPrice * 0.8, // 20% below minimum
+        valueNumber: budgetInfo.searchMin,
       })
 
-      if (maxPrice < 99999) {
+      if (!budgetInfo.isUnlimited) {
         whereFilters.operands.push({
           path: ["price"],
           operator: "LessThanEqual",
-          valueNumber: maxPrice * 1.2, // 20% above maximum
+          valueNumber: budgetInfo.searchMax,
         })
       }
 
-      console.log(`   💰 Budget: $${minPrice * 0.8} - $${maxPrice * 1.2} (±20% flexibility)`)
+      console.log(`   💰 Budget Strategy:`)
+      console.log(`      Tier: ${budgetInfo.tier}`)
+      console.log(`      Total Budget: $${budgetForCalculation.min}-$${budgetForCalculation.max}`)
+      console.log(
+        `      Category: ${category} (${Math.round((budgetInfo.categoryMin / budgetForCalculation.min) * 100)}% of total)`,
+      )
+      console.log(`      User Range: $${budgetInfo.categoryMin} - $${budgetInfo.categoryMax}`)
+      console.log(
+        `      Search Range: $${budgetInfo.searchMin} - ${budgetInfo.isUnlimited ? "unlimited" : "$" + budgetInfo.searchMax}`,
+      )
+      console.log(
+        `      Flexibility: -${budgetInfo.downFlexPercent}% / +${budgetInfo.upFlexPercent}${typeof budgetInfo.upFlexPercent === "string" ? "" : "%"}`,
+      )
     }
 
     console.log(`   🔎 Searching Weaviate with hybrid search...`)
+
+    const fetchMultiplier = budgetInfo?.tier === "luxury" ? 4 : budgetInfo?.tier === "premium" ? 3.5 : 3
+    const initialLimit = Math.round(limit * fetchMultiplier)
 
     const response = await weaviateClient.graphql
       .get()
@@ -521,15 +682,95 @@ app.post("/api/search", async (req, res) => {
       )
       .withNearVector({ vector: embedding })
       .withWhere(whereFilters)
-      .withLimit(limit * 3) // Fetch 3x to ensure variety after all filtering
+      .withLimit(initialLimit)
       .withHybrid({
         query: query,
-        alpha: 0.7, // 70% vector, 30% keyword - balanced approach
+        alpha: 0.7,
       })
       .do()
 
     let products = response.data.Get.Product || []
     console.log(`   ✓ Found ${products.length} products before processing`)
+
+    if (products.length < limit / 2 && budgetInfo && !budgetInfo.isUnlimited) {
+      console.log(`   ⚠️  Only ${products.length} products found, relaxing budget constraints...`)
+
+      // First attempt: +10% more upward flexibility
+      const relaxedMax = budgetInfo.searchMax * 1.1
+      console.log(`   🔄 Retry 1: Increasing max to $${Math.round(relaxedMax)}`)
+
+      whereFilters.operands = whereFilters.operands.filter(
+        (op) => op.path[0] !== "price" || op.operator !== "LessThanEqual",
+      )
+      whereFilters.operands.push({
+        path: ["price"],
+        operator: "LessThanEqual",
+        valueNumber: relaxedMax,
+      })
+
+      const retryResponse = await weaviateClient.graphql
+        .get()
+        .withClassName("Product")
+        .withFields(
+          "product_id product_name description brand price color category suitableOccasions formalityLevel heelType",
+        )
+        .withNearVector({ vector: embedding })
+        .withWhere(whereFilters)
+        .withLimit(initialLimit)
+        .withHybrid({ query: query, alpha: 0.7 })
+        .do()
+
+      products = retryResponse.data.Get.Product || []
+      console.log(`   ✓ Retry 1 result: ${products.length} products`)
+
+      // Second attempt: +50% more if still too few
+      if (products.length < limit / 2) {
+        const veryRelaxedMax = budgetInfo.searchMax * 1.5
+        console.log(`   🔄 Retry 2: Increasing max to $${Math.round(veryRelaxedMax)}`)
+
+        whereFilters.operands = whereFilters.operands.filter(
+          (op) => op.path[0] !== "price" || op.operator !== "LessThanEqual",
+        )
+        whereFilters.operands.push({
+          path: ["price"],
+          operator: "LessThanEqual",
+          valueNumber: veryRelaxedMax,
+        })
+
+        const retry2Response = await weaviateClient.graphql
+          .get()
+          .withClassName("Product")
+          .withFields("product_id product_name")
+          .withNearVector({ vector: embedding })
+          .withWhere(whereFilters)
+          .withLimit(initialLimit)
+          .do()
+
+        products = retry2Response.data.Get.Product || []
+        console.log(`   ✓ Retry 2 result: ${products.length} products`)
+
+        // Final attempt: remove upper limit entirely
+        if (products.length < limit / 2) {
+          console.log(`   🔄 Retry 3: Removing upper budget limit entirely`)
+
+          whereFilters.operands = whereFilters.operands.filter(
+            (op) => op.path[0] !== "price" || op.operator !== "LessThanEqual",
+          )
+
+          const retry3Response = await weaviateClient.graphql
+            .get()
+            .withClassName("Product")
+            .withFields("product_id product_name")
+            .withNearVector({ vector: embedding })
+            .withWhere(whereFilters)
+            .withLimit(initialLimit)
+            .do()
+
+          products = retry3Response.data.Get.Product || []
+          console.log(`   ✓ Retry 3 result: ${products.length} products`)
+        }
+      }
+    }
 
     products = deduplicateProducts(products)
     console.log(`   ✓ ${products.length} unique products after deduplication`)
@@ -547,10 +788,19 @@ app.post("/api/search", async (req, res) => {
       console.log(
         `   Top 3: ${products
           .slice(0, 3)
-          .map((p) => p.product_name?.substring(0, 40))
+          .map((p) => `${p.product_name?.substring(0, 30)} ($${p.price})`)
           .join(", ")}`,
       )
     }
+
+    const budgetSummary = budgetInfo
+      ? {
+          tier: budgetInfo.tier,
+          categoryBudget: `$${budgetInfo.categoryMin}-$${budgetInfo.categoryMax}`,
+          searchRange: `$${budgetInfo.searchMin}-${budgetInfo.isUnlimited ? "unlimited" : "$" + budgetInfo.searchMax}`,
+          flexibility: `${budgetInfo.downFlexPercent}%/${budgetInfo.upFlexPercent}${typeof budgetInfo.upFlexPercent === "string" ? "" : "%"}`,
+        }
+      : null
 
     res.json({
       success: true,
@@ -559,6 +809,8 @@ app.post("/api/search", async (req, res) => {
       query: query,
       category: category,
       occasion: occasion,
+      style: style, // Include style in response
+      budget: budgetSummary,
     })
   } catch (error) {
     console.error("❌ Search error:", error)
@@ -587,7 +839,7 @@ app.post("/api/search-batch", async (req, res) => {
 
     const results = await Promise.all(
       queries.map(async (q) => {
-        const semanticQuery = buildSemanticQuery(q.query, q.occasion || "everyday", q.category || "general")
+        const semanticQuery = buildSemanticQuery(q.query, q.occasion || "everyday", q.category || "general", q.style)
         const embedding = await generateEmbedding(semanticQuery)
 
         if (!embedding) return { query: q.query, product_ids: [] }
@@ -626,6 +878,7 @@ app.post("/api/search-batch", async (req, res) => {
           query: q.query,
           category: q.category,
           occasion: q.occasion,
+          style: q.style, // Include style in response
           product_ids: products.map((p) => p.product_id),
           count: products.length,
         }
