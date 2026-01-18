@@ -179,49 +179,36 @@ function postFilterByOccasion(products, occasion, category) {
       const hasWorkoutKeyword = workoutKeywords.some((k) => combined.includes(k))
 
       if (!hasWorkoutKeyword) {
+        // Trust vector search for neutral items (they passed embedding filter already)
+        // Only reject OBVIOUSLY formal/inappropriate items
         const obviouslyNotWorkout = [
-          "zw collection",
-          "limited edition",
           "blazer",
-          "suit",
+          "suit jacket",
           "formal",
-          "business",
-          "office",
+          "business suit",
+          "office wear",
           "dress pants",
           "dress shirt",
           "cocktail",
-          "evening",
+          "evening gown",
           "party dress",
           "gown",
-          "wedding",
+          "wedding dress",
           "prom",
           "tuxedo",
           "bow tie",
           "cufflink",
           "silk blouse",
-          "velvet",
+          "velvet gown",
           "satin dress",
           "lace dress",
           "sequin",
           "beaded",
           "rhinestone",
-          "embroidered",
-          "crochet",
-          "ruffle",
-          "pleated",
-          "floral print",
-          "polka dot",
-          "striped shirt",
-          "denim jacket",
-          "leather jacket", // Added leather jacket to reject list
+          "embroidered dress",
+          "crochet dress",
           "fur coat",
           "trench coat",
-          "cardigan",
-          "sweater",
-          "wool",
-          "cashmere",
-          "flannel",
-          "corduroy",
         ]
 
         const isObviouslyNotWorkout = obviouslyNotWorkout.some((k) => combined.includes(k))
@@ -231,6 +218,7 @@ function postFilterByOccasion(products, occasion, category) {
           return false
         }
 
+        // Trust vector search for items that passed embedding occasion filter
         return true
       }
 
@@ -246,7 +234,6 @@ function postFilterByOccasion(products, occasion, category) {
         "wedding dress",
         "ballgown",
         "tuxedo",
-        "leather", // Added leather to formal reject list
       ]
 
       const hasRejectKeyword = workoutReject.some((k) => combined.includes(k))
@@ -257,9 +244,13 @@ function postFilterByOccasion(products, occasion, category) {
       }
 
       if (category === "shoes") {
-        if (/heel|pump|stiletto|dress shoe|oxford.*(?!running)|boot(?!.*(?:running|hiking|athletic))/i.test(combined)) {
-          console.log(`  🚫 Rejected non-athletic shoe for workout: ${name.substring(0, 50)}`)
-          return false
+        // Reject heels and dress shoes, but ALLOW leather sneakers/trainers
+        if (/heel|pump|stiletto|dress shoe|oxford|loafer(?!.*sneaker)|boot(?!.*(?:running|hiking|athletic|ankle))/i.test(combined)) {
+          // Except if it's explicitly athletic (leather sneaker, leather trainer)
+          if (!/sneaker|trainer|athletic|sport|running/i.test(combined)) {
+            console.log(`  🚫 Rejected non-athletic shoe for workout: ${name.substring(0, 50)}`)
+            return false
+          }
         }
       }
     }
@@ -740,10 +731,13 @@ app.post("/api/search", async (req, res) => {
         const retry2Response = await weaviateClient.graphql
           .get()
           .withClassName("Product")
-          .withFields("product_id product_name")
+          .withFields(
+            "product_id product_name description brand price color category suitableOccasions formalityLevel heelType",
+          )
           .withNearVector({ vector: embedding })
           .withWhere(whereFilters)
           .withLimit(initialLimit)
+          .withHybrid({ query: query, alpha: 0.7 })
           .do()
 
         products = retry2Response.data.Get.Product || []
@@ -760,10 +754,13 @@ app.post("/api/search", async (req, res) => {
           const retry3Response = await weaviateClient.graphql
             .get()
             .withClassName("Product")
-            .withFields("product_id product_name")
+            .withFields(
+              "product_id product_name description brand price color category suitableOccasions formalityLevel heelType",
+            )
             .withNearVector({ vector: embedding })
             .withWhere(whereFilters)
             .withLimit(initialLimit)
+            .withHybrid({ query: query, alpha: 0.7 })
             .do()
 
           products = retry3Response.data.Get.Product || []
